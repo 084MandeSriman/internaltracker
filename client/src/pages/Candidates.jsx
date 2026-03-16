@@ -1,6 +1,6 @@
 import Layout from "../components/Layout";
 import { useEffect, useState, useRef, useContext } from "react";
-import { apiFetch } from "../services/api";
+import { supabase } from "../supabaseClient";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { Link } from "react-router-dom";
@@ -61,38 +61,121 @@ export default function Candidates() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const pageSize = 10; // items per page
 
   useEffect(() => {
-    apiFetch("/master-data")
-      .then(res => res.json())
-      .then(resData => setMasterData(resData))
-      .catch(err => console.error(err));
+    const loadMasterData = async () => {
+      try {
+        const { data: roles } = await supabase.from("job_roles").select("*");
+        const { data: clients } = await supabase.from("clients").select("*");
+        const { data: stages } = await supabase.from("funnel_stages").select("*");
+        const { data: contractTypes } = await supabase.from("contract_types").select("*");
+        const { data: officeModes } = await supabase.from("office_modes").select("*");
+        const { data: recruiters } = await supabase.from("users").select("*");
+
+        setMasterData({
+          job_roles: roles || [],
+          clients: clients || [],
+          funnel_stages: stages || [],
+          contract_types: contractTypes || [],
+          office_modes: officeModes || [],
+          recruiters: recruiters || []
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    };
+
+    loadMasterData();
   }, []);
 
-  const fetchCandidates = (page = 1) => {
-    const queryParams = new URLSearchParams();
-    if (appliedFilters.search) queryParams.append('search', appliedFilters.search);
-    if (appliedFilters.role_id) queryParams.append('role_id', appliedFilters.role_id);
-    if (appliedFilters.recruiter_id) queryParams.append('recruiter_id', appliedFilters.recruiter_id);
-    if (appliedFilters.client_id) queryParams.append('client_id', appliedFilters.client_id);
-    if (appliedFilters.stage_id) queryParams.append('stage_id', appliedFilters.stage_id);
-    if (appliedFilters.experience) queryParams.append('experience', appliedFilters.experience);
-    queryParams.append('sortBy', sortBy);
-    queryParams.append('page', page);
+  const fetchCandidates = async (page = currentPage) => {
+    try {
+      // Build the query with joins
+      let query = supabase
+        .from("candidates")
+        .select(`
+    *,
+    job_roles:job_role_id(name),
+    clients:client_id(name),
+    funnel_stages:funnel_stage_id(name),
+    office_modes:office_mode_id(name),
+    contract_types:contract_type_id(name),
+    users:recruiter_id(name)
+  `, { count: "exact" });
 
-    apiFetch(`/candidates?${queryParams.toString()}`)
-      .then(res => res.json())
-      .then(resData => {
-        if (resData.candidates) {
-          setData(resData.candidates);
-          setTotal(resData.total || 0);
-          setTotalPages(resData.totalPages || 1);
-          setCurrentPage(resData.page || 1);
-        } else {
-          setData(resData);
+      // Apply filters
+      if (appliedFilters.role_id) {
+        query = query.eq("job_role_id", appliedFilters.role_id);
+      }
+      if (appliedFilters.recruiter_id) {
+        query = query.eq("recruiter_id", appliedFilters.recruiter_id);
+      }
+      if (appliedFilters.client_id) {
+        query = query.eq("client_id", appliedFilters.client_id);
+      }
+      if (appliedFilters.stage_id) {
+        query = query.eq("funnel_stage_id", appliedFilters.stage_id);
+      }
+      if (appliedFilters.experience) {
+        const exp = parseInt(appliedFilters.experience);
+        if (!isNaN(exp)) {
+          query = query.gte("experience", exp);
         }
-      })
-      .catch(err => console.error(err));
+      }
+      if (appliedFilters.search) {
+        query = query.ilike("name", `%${appliedFilters.search}%`);
+      }
+
+      // Apply sorting
+      switch (sortBy) {
+        case "oldest":
+          query = query.order("created_at", { ascending: true });
+          break;
+        case "name_asc":
+          query = query.order("name", { ascending: true });
+          break;
+        case "name_desc":
+          query = query.order("name", { ascending: false });
+          break;
+        case "exp_high":
+          query = query.order("experience", { ascending: false });
+          break;
+        case "exp_low":
+          query = query.order("experience", { ascending: true });
+          break;
+        default: // newest
+          query = query.order("created_at", { ascending: false });
+      }
+
+      // Apply pagination
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      query = query.range(from, to);
+
+      const { data, error, count } = await query;
+
+      if (error) {
+        console.error(error);
+        return;
+      }
+
+      const formatted = (data || []).map(c => ({
+        ...c,
+        role: c.job_roles?.name,
+        client: c.clients?.name,
+        status: c.funnel_stages?.name,
+        office_mode: c.office_modes?.name,
+        contract_type: c.contract_types?.name,
+        recruiter: c.users?.name
+      }));
+
+      setData(formatted);
+      setTotal(count || 0);
+      setTotalPages(Math.ceil((count || 0) / pageSize));
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   useEffect(() => {
@@ -130,14 +213,27 @@ export default function Candidates() {
 
   const handleStatusChange = async (candidateId, newStageId) => {
     try {
-      const res = await apiFetch(`/candidates/${candidateId}/status`, {
-        method: 'PUT',
-        body: JSON.stringify({ funnel_stage_id: newStageId })
-      });
-      if (res.ok) {
-        setData(prevData => prevData.map(c =>
-          c.id === candidateId ? { ...c, funnel_stage_id: newStageId, status: masterData.funnel_stages.find(s => s.id == newStageId)?.name || c.status } : c
-        ));
+      const { error } = await supabase
+        .from("candidates")
+        .update({ funnel_stage_id: newStageId })
+        .eq("id", candidateId);
+
+      if (!error) {
+        setData(prevData =>
+          prevData.map(c =>
+            c.id === candidateId
+              ? {
+                ...c,
+                funnel_stage_id: newStageId,
+                status:
+                  masterData.funnel_stages.find(s => s.id == newStageId)?.name ||
+                  c.status
+              }
+              : c
+          )
+        );
+      } else {
+        console.error(error);
       }
     } catch (err) {
       console.error("Failed to update status", err);
@@ -148,14 +244,18 @@ export default function Candidates() {
     if (!window.confirm(t("Are you sure you want to delete this candidate? This action cannot be undone."))) return;
 
     try {
-      const res = await apiFetch(`/candidates/${candidateId}`, {
-        method: 'DELETE'
-      });
-      if (res.ok) {
+      const { error } = await supabase
+        .from("candidates")
+        .delete()
+        .eq("id", candidateId);
+
+      if (!error) {
         setData(prevData => prevData.filter(c => c.id !== candidateId));
+        // Refresh total count and pagination
+        fetchCandidates(currentPage);
       } else {
-        const errData = await res.json();
-        alert(errData.message || t("Failed to delete candidate"));
+        console.error("Delete Error:", error);
+        alert(t("Failed to delete candidate"));
       }
     } catch (err) {
       console.error("Delete Error:", err);
@@ -165,7 +265,7 @@ export default function Candidates() {
 
   const exportExcel = () => {
     console.log("Current data before export:", data);
-    
+
     // Helper to get contract type name from the data
     const getContractType = (candidate) => {
       if (candidate.contract_type) return candidate.contract_type;
@@ -249,32 +349,79 @@ export default function Candidates() {
   // 🌐 REFERENCE DATA CREATION - Create missing reference data in database
   const createReferenceData = async (type, name) => {
     try {
-      const endpoint = {
-        'job_role': '/reference/job-roles',
-        'office_mode': '/reference/office-modes',
-        'client': '/reference/clients',
-        'contract_type': '/reference/contract-types'
-      }[type];
+      const tableMap = {
+        job_role: "job_roles",
+        office_mode: "office_modes",
+        client: "clients",
+        contract_type: "contract_types"
+      };
 
-      if (!endpoint) {
-        console.warn(`No endpoint found for type: ${type}`);
+      const table = tableMap[type];
+      if (!table) return null;
+
+      const { data, error } = await supabase
+        .from(table)
+        .insert({ name })
+        .select()
+        .single();
+
+      if (error) {
+        console.error(error);
         return null;
       }
 
-      const response = await apiFetch(endpoint, {
-        method: 'POST',
-        body: JSON.stringify({ name: name })
-      });
+      return data.id;
 
-      if (response && response.id) {
-        console.log(`✨ Created new ${type}: "${name}" with ID ${response.id}`);
-        return response.id;
-      }
-      return null;
     } catch (error) {
-      console.error(`Failed to create ${type} "${name}":`, error);
+      console.error(error);
       return null;
     }
+  };
+
+  // Helper to parse a date string into YYYY-MM-DD
+  const parseDateString = (dateStr) => {
+    if (!dateStr) return null;
+    dateStr = String(dateStr).trim();
+
+    // If it's already ISO (YYYY-MM-DD), return as is
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+
+    // Split by dash or slash
+    const parts = dateStr.split(/[-\/]/);
+    if (parts.length === 3) {
+      let [first, second, third] = parts;
+
+      // If first part has 4 digits, it's YYYY-MM-DD or YYYY/MM/DD
+      if (first.length === 4) {
+        let year = first;
+        let month = second.padStart(2, '0');
+        let day = third.padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }
+      // If third part has 4 digits, it's DD-MM-YYYY or DD/MM/YYYY
+      else if (third.length === 4) {
+        let day = first.padStart(2, '0');
+        let month = second.padStart(2, '0');
+        let year = third;
+        return `${year}-${month}-${day}`;
+      }
+      // If third part has 2 digits, assume DD-MM-YY
+      else if (third.length === 2) {
+        let day = first.padStart(2, '0');
+        let month = second.padStart(2, '0');
+        let year = `20${third}`;
+        return `${year}-${month}-${day}`;
+      }
+    }
+
+    // Fallback: try native Date parsing (may work for some formats)
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) {
+      return d.toISOString().split("T")[0];
+    }
+
+    // If all else fails, return null (database will store NULL)
+    return null;
   };
 
   const handleImport = (e) => {
@@ -285,111 +432,119 @@ export default function Candidates() {
       try {
         const bstr = evt.target.result;
         const wb = XLSX.read(bstr, { type: "binary" });
-const wsname = wb.SheetNames[0];
-const ws = wb.Sheets[wsname];
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
 
-// Excel Validation - Step 1 & 2: Header and Data Type Check
-const headers = XLSX.utils.sheet_to_json(ws, {header:1 })[0] || [];
-console.log("Excel headers:", headers);
+        // Excel Validation - Step 1 & 2: Header and Data Type Check
+        const headers = XLSX.utils.sheet_to_json(ws, { header: 1 })[0] || [];
+        console.log("Excel headers:", headers);
 
-const sampleRows = XLSX.utils.sheet_to_json(ws, {range: 1, limit: 10}) || [];
+        const sampleRows = XLSX.utils.sheet_to_json(ws, { range: 1, limit: 10 }) || [];
 
-const requiredFields = [
-  { field: 'name', aliases: ['NAME', 'Name'], validators: [
-    (val) => {
-      if (!val || val.toString().trim() === '') return true;
-        const namePattern = /^[\w\s.'-]{2,50}$/;
-      const locationKeywords = ['Remote', 'Hybrid', 'Onsite', 'WFO', 'WFH', 'WFM', 'Mumbai', 'Delhi', 'Bangalore', 'Hybrid', 'Pune'];
-      const isInvalidLocation = locationKeywords.some(kw => val.toString().toLowerCase().includes(kw.toLowerCase()));
-      return namePattern.test(val.toString().trim()) && !isInvalidLocation;
-    }
-  ] },
-{ field: 'current_ctc', aliases: ['CURRENT CTC', 'Current CTC'], validators: [
-    (val) => {
-      if (!val) return true;
-      const ctcPattern = /^[\d,\.kKmM\s]+$/i;
-      return ctcPattern.test(val.toString().trim());
-    }
-  ] },
-  { field: 'expected_ctc', aliases: ['EXPECTED CTC', 'Expected CTC'], validators: [
-    (val) => {
-      if (!val) return true;
-      const ctcPattern = /^[\d,\.kKmM\s]+$/i;
-      return ctcPattern.test(val.toString().trim());
-    }
-  ] },
-  { field: 'experience', aliases: ['REL EXP (YEARS)', 'Experience', 'Exp'], validators: [
-    (val) => {
-      if (!val) return true;
-      const numPattern = /^\d+$/;
-      return numPattern.test(val.toString().trim());
-    }
-  ] }
-];
+        const requiredFields = [
+          {
+            field: 'name', aliases: ['NAME', 'Name'], validators: [
+              (val) => {
+                if (!val || val.toString().trim() === '') return true;
+                const namePattern = /^[\w\s.'-]{2,50}$/;
+                const locationKeywords = ['Remote', 'Hybrid', 'Onsite', 'WFO', 'WFH', 'WFM', 'Mumbai', 'Delhi', 'Bangalore', 'Hybrid', 'Pune'];
+                const isInvalidLocation = locationKeywords.some(kw => val.toString().toLowerCase().includes(kw.toLowerCase()));
+                return namePattern.test(val.toString().trim()) && !isInvalidLocation;
+              }
+            ]
+          },
+          {
+            field: 'current_ctc', aliases: ['CURRENT CTC', 'Current CTC'], validators: [
+              (val) => {
+                if (!val) return true;
+                const ctcPattern = /^[\d,\.kKmM\s]+$/i;
+                return ctcPattern.test(val.toString().trim());
+              }
+            ]
+          },
+          {
+            field: 'expected_ctc', aliases: ['EXPECTED CTC', 'Expected CTC'], validators: [
+              (val) => {
+                if (!val) return true;
+                const ctcPattern = /^[\d,\.kKmM\s]+$/i;
+                return ctcPattern.test(val.toString().trim());
+              }
+            ]
+          },
+          {
+            field: 'experience', aliases: ['REL EXP (YEARS)', 'Experience', 'Exp'], validators: [
+              (val) => {
+                if (!val) return true;
+                const numPattern = /^\d+$/;
+                return numPattern.test(val.toString().trim());
+              }
+            ]
+          }
+        ];
 
-const errors = [];
+        const errors = [];
 
-// Check required columns present
-requiredFields.forEach(({field, aliases}) => {
-  const found = aliases.some(alias => headers.some(h => h.toString().toUpperCase().includes(alias.toUpperCase())));
-  if (!found) {
-    errors.push(`Missing required column for ${field.toUpperCase()}. Expected one of: ${aliases.join(', ')}`);
-  }
-});
+        // Check required columns present
+        requiredFields.forEach(({ field, aliases }) => {
+          const found = aliases.some(alias => headers.some(h => h.toString().toUpperCase().includes(alias.toUpperCase())));
+          if (!found) {
+            errors.push(`Missing required column for ${field.toUpperCase()}. Expected one of: ${aliases.join(', ')}`);
+          }
+        });
 
-// Sample data validation
-requiredFields.forEach(({field, aliases, validators}) => {
-  const columnValues = sampleRows.map(row => {
-    for (const alias of aliases) {
-      const val = row[alias];
-      if (val !== undefined && val !== null && val !== '') return val;
-    }
-    return null;
-  }).filter(Boolean);
+        // Sample data validation
+        requiredFields.forEach(({ field, aliases, validators }) => {
+          const columnValues = sampleRows.map(row => {
+            for (const alias of aliases) {
+              const val = row[alias];
+              if (val !== undefined && val !== null && val !== '') return val;
+            }
+            return null;
+          }).filter(Boolean);
 
-  if (columnValues.length === 0) return;
+          if (columnValues.length === 0) return;
 
-  let invalidCount = 0;
-  const invalidSamples = [];
-  columnValues.slice(0,5).forEach((val, idx) => {  // Check first 5
-    const isValid = validators.every(fn => fn(val));
-    if (!isValid) {
-      invalidCount++;
-      invalidSamples.push(`Row ${idx+2}: "${val}"`);
-    }
-  });
+          let invalidCount = 0;
+          const invalidSamples = [];
+          columnValues.slice(0, 5).forEach((val, idx) => {  // Check first 5
+            const isValid = validators.every(fn => fn(val));
+            if (!isValid) {
+              invalidCount++;
+              invalidSamples.push(`Row ${idx + 2}: "${val}"`);
+            }
+          });
 
-  const invalidRatio = invalidCount / Math.min(columnValues.length, 5);
-  if (invalidRatio > 0.2) {  // >20% invalid
-    errors.push(`Invalid data in ${field.toUpperCase()} column (${Math.round(invalidRatio*100)}% bad): ${invalidSamples.slice(0,3).join('; ')}`);
-  }
-});
+          const invalidRatio = invalidCount / Math.min(columnValues.length, 5);
+          if (invalidRatio > 0.2) {  // >20% invalid
+            errors.push(`Invalid data in ${field.toUpperCase()} column (${Math.round(invalidRatio * 100)}% bad): ${invalidSamples.slice(0, 3).join('; ')}`);
+          }
+        });
 
-const isValid = errors.length === 0;
-if (!isValid) {
-  console.error("Excel validation failed:", errors);
-  alert(`Invalid Excel data!\n\nErrors:\n${errors.join('\n')}\n\nPlease fix columns and try again.\nExpected:\n- NAME: names only (no locations like Remote/Hybrid)\n- CTC: numbers (10L, 20k etc)\n- Experience: numbers only`);
-  return;
-}
+        const isValid = errors.length === 0;
+        if (!isValid) {
+          console.error("Excel validation failed:", errors);
+          alert(`Invalid Excel data!\n\nErrors:\n${errors.join('\n')}\n\nPlease fix columns and try again.\nExpected:\n- NAME: names only (no locations like Remote/Hybrid)\n- CTC: numbers (10L, 20k etc)\n- Experience: numbers only`);
+          return;
+        }
 
-console.log("Excel validation passed!");
+        console.log("Excel validation passed!");
 
         const rawData = XLSX.utils.sheet_to_json(ws);
-        
+
         // Debug: Log the first row to see all column names
         if (rawData.length > 0) {
           console.log("Excel columns found:", Object.keys(rawData[0]));
           console.log("First row data:", rawData[0]);
           console.log("Master data contract types available:", masterData.contract_types);
         }
-        
+
         const findIdByName = async (array, name, type) => {
           if (!name) return null;
           const trimmedName = String(name).toLowerCase().trim();
-          
+
           // Skip N/A values
           if (trimmedName === 'n/a' || trimmedName === '-') return null;
-          
+
           // Normalize function: handle spacing and hyphenation differences
           const normalize = (str) => {
             return str
@@ -399,45 +554,45 @@ console.log("Excel validation passed!");
               .replace(/[\s\-]+/g, '-')  // Replace spaces and hyphens with single hyphen
               .replace(/-+/g, '-');  // Remove double hyphens
           };
-          
+
           const normalizedSearch = normalize(trimmedName);
-          
+
           // Try exact match first
-          const found = array.find(item => 
+          const found = array.find(item =>
             item.name && item.name.toLowerCase().trim() === trimmedName
           );
-          
+
           if (found) {
             console.log(`✓ Matched "${name}" to ID ${found.id}`);
             return found.id;
           }
-          
+
           // Try normalized match (handles "Full time" vs "Full-Time", etc.)
           const normalizedMatch = array.find(item =>
             item.name && normalize(item.name) === normalizedSearch
           );
-          
+
           if (normalizedMatch) {
             console.log(`✓ Matched "${name}" to ID ${normalizedMatch.id}`);
             return normalizedMatch.id;
           }
-          
+
           // Try case-insensitive match
           const caseInsensitiveMatch = array.find(item =>
             item.name && item.name.toLowerCase().trim() === trimmedName
           );
-          
+
           if (caseInsensitiveMatch) {
             console.log(`✓ Matched "${name}" to ID ${caseInsensitiveMatch.id}`);
             return caseInsensitiveMatch.id;
           }
-          
+
           // Try partial match as fallback
           const partialMatch = array.find(item =>
-            item.name && (trimmedName.includes(item.name.toLowerCase().trim()) || 
-                         item.name.toLowerCase().trim().includes(trimmedName))
+            item.name && (trimmedName.includes(item.name.toLowerCase().trim()) ||
+              item.name.toLowerCase().trim().includes(trimmedName))
           );
-          
+
           if (partialMatch) {
             console.log(`✓ Partial matched "${name}" to ID ${partialMatch.id}`);
             return partialMatch.id;
@@ -449,7 +604,7 @@ console.log("Excel validation passed!");
             if (mappedName) {
               console.log(`📍 Using abbreviation mapping: "${name}" → "${mappedName}"`);
               // Direct lookup instead of recursion
-              const directMatch = array.find(item => 
+              const directMatch = array.find(item =>
                 item.name && item.name.toLowerCase().trim() === mappedName.toLowerCase().trim()
               );
               if (directMatch) return directMatch.id;
@@ -466,7 +621,7 @@ console.log("Excel validation passed!");
               return newId;
             }
           }
-          
+
           console.warn(`✗ Could not match or create "${name}" for type ${type}`, array.map(a => a.name));
           return null;
         };
@@ -505,22 +660,36 @@ console.log("Excel validation passed!");
         const parsedCandidates = await Promise.all(rawData.map(async (row, idx) => {
           const contractTypeValue = getColumnValue(row, 'Contract Type', 'TYPE OF CONTRACT', 'ContractType', 'CONTRACTTYPE', 'CONTRACT TYPE');
           const contractTypeId = await findIdByName(masterData.contract_types, contractTypeValue, 'contract_type');
-          
+
           const jobRoleValue = getColumnValue(row, 'JOB ROLE', 'Job Role');
           const jobRoleId = await findIdByName(masterData.job_roles, jobRoleValue, 'job_role');
-          
+
           const clientValue = getColumnValue(row, 'CLIENT', 'Client');
           const clientId = await findIdByName(masterData.clients, clientValue, 'client');
-          
+
           const officeModeValue = getColumnValue(row, 'OFFICE MODE', 'Office Mode');
           const officeModeId = await findIdByName(masterData.office_modes, officeModeValue, 'office_mode');
-          
+
           const funnelStageValue = String(getColumnValue(row, 'RECRUITMENT FUNNEL', 'Funnel Stage') || '').split('-')[1]?.trim() || getColumnValue(row, 'RECRUITMENT FUNNEL', 'Funnel Stage');
           const funnelStageId = await findIdByName(masterData.funnel_stages, funnelStageValue);
-          
+
           const recruiterValue = getColumnValue(row, 'RECRUITER', 'Recruiter');
           const recruiterId = await findIdByName(masterData.recruiters, recruiterValue);
-          
+
+          // Handle submission date: Excel may store it as a number (serial date) or a string
+          const excelDate = getColumnValue(row, 'SUBMISSION DATE', 'Submission Date');
+          let submissionDate = null;
+          if (excelDate) {
+            if (typeof excelDate === "number") {
+              // Convert Excel serial date to JavaScript Date
+              const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+              submissionDate = jsDate.toISOString().split("T")[0];
+            } else {
+              // Parse string date using our helper
+              submissionDate = parseDateString(excelDate);
+            }
+          }
+
           const parsedRow = {
             name: getColumnValue(row, 'NAME', 'Name') || "",
             email: getColumnValue(row, 'EMAIL', 'Email') || "",
@@ -534,12 +703,12 @@ console.log("Excel validation passed!");
             contract_type_id: contractTypeId,
             offer_status: getColumnValue(row, 'OFFER STATUS', 'Offer Status') || 'Pending',
             job_location: getColumnValue(row, 'JOB LOCATION', 'Job Location') || "",
-            submission_date: getColumnValue(row, 'SUBMISSION DATE', 'Submission Date') || "",
+            submission_date: submissionDate,
             current_ctc: getColumnValue(row, 'CURRENT CTC', 'Current CTC') || "",
             expected_ctc: getColumnValue(row, 'EXPECTED CTC', 'Expected CTC') || "",
             recruiter_id: recruiterId || null
           };
-          
+
           if (contractTypeValue) {
             console.log(`Row ${idx + 1} (${row.Name || row.name}): Contract Type = "${contractTypeValue}" → ID = ${contractTypeId}`);
           }
@@ -547,27 +716,28 @@ console.log("Excel validation passed!");
           // validate row
           const rowErrors = validateRow(parsedRow);
           if (rowErrors.length) {
-            throw new Error(`Row ${idx+1} failed validation: ${rowErrors.join(', ')}`);
+            throw new Error(`Row ${idx + 1} failed validation: ${rowErrors.join(', ')}`);
           }
-          
+
           return parsedRow;
         })).then(candidates => candidates.filter(c => c.name));
 
         console.log("Final parsed candidates for import:", JSON.stringify(parsedCandidates, null, 2));
 
-        const res = await apiFetch("/candidates/bulk", {
-          method: "POST",
-          body: JSON.stringify(parsedCandidates)
-        });
-        
-        if (res.ok) {
-          const result = await res.json();
-          alert(t("Success! ") + result.message);
-          fetchCandidates();
+        const { error } = await supabase
+          .from("candidates")
+          .insert(parsedCandidates);
+
+        if (error) {
+          console.error(error);
+          alert("Import failed: " + error.message);
         } else {
-          const errorData = await res.json();
-          console.error("Server error:", errorData);
-          alert(t("Error: ") + (errorData.message || "Import failed. Check console for details."));
+          alert("Candidates imported successfully");
+
+          // refresh table immediately
+          await fetchCandidates(1);
+
+          setCurrentPage(1);
         }
       } catch (error) {
         console.error("Import error:", error);
@@ -725,7 +895,7 @@ console.log("Excel validation passed!");
                       <td className="px-6 py-5">
                         {c.resume_url ? (
                           <button
-                            onClick={(e) => { e.stopPropagation(); setResumeViewerUrl(`http://localhost:5000/${c.resume_url}`); }}
+                            onClick={(e) => { e.stopPropagation(); setResumeViewerUrl(c.resume_url); }}
                             className="text-teal-600 font-bold hover:underline text-xs bg-teal-50 px-3 py-1.5 rounded-lg border border-teal-100 transition-colors hover:bg-teal-100 inline-flex items-center gap-1"
                           >
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
@@ -797,7 +967,6 @@ console.log("Excel validation passed!");
                 onClick={() => {
                   if (currentPage > 1) {
                     setCurrentPage(currentPage - 1);
-                    fetchCandidates(currentPage - 1);
                   }
                 }}
                 disabled={currentPage === 1}
@@ -817,13 +986,11 @@ console.log("Excel validation passed!");
                       key={pageNum}
                       onClick={() => {
                         setCurrentPage(pageNum);
-                        fetchCandidates(pageNum);
                       }}
-                      className={`px-3 py-1.5 text-sm font-medium rounded-lg ${
-                        currentPage === pageNum
-                          ? "bg-teal-600 text-white"
-                          : "text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
-                      }`}
+                      className={`px-3 py-1.5 text-sm font-medium rounded-lg ${currentPage === pageNum
+                        ? "bg-teal-600 text-white"
+                        : "text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
+                        }`}
                     >
                       {pageNum}
                     </button>
@@ -844,7 +1011,6 @@ console.log("Excel validation passed!");
                 onClick={() => {
                   if (currentPage < totalPages) {
                     setCurrentPage(currentPage + 1);
-                    fetchCandidates(currentPage + 1);
                   }
                 }}
                 disabled={currentPage === totalPages}
@@ -907,15 +1073,19 @@ console.log("Excel validation passed!");
                 <button
                   onClick={async () => {
                     try {
-                      const res = await apiFetch(`/candidates/${clientFeedbackModal.id}/client-feedback`, {
-                        method: "PUT",
-                        body: JSON.stringify({ client_status: clientStatus, client_feedback: clientFeedback })
-                      });
-                      if (res.ok) {
+                      const { error } = await supabase
+                        .from("candidates")
+                        .update({
+                          client_status: clientStatus,
+                          client_feedback: clientFeedback
+                        })
+                        .eq("id", clientFeedbackModal.id);
+
+                      if (!error) {
                         setClientFeedbackModal(null);
-                        fetchCandidates();
+                        fetchCandidates(currentPage);
                       } else {
-                        alert("Failed to submit feedback.");
+                        alert("Failed to submit feedback");
                       }
                     } catch (err) {
                       console.error(err);

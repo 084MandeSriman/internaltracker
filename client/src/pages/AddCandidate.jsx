@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiFetch } from "../services/api";
 import Layout from "../components/Layout";
+import { supabase } from "../supabaseClient";
 
 export default function AddCandidate() {
   const navigate = useNavigate();
@@ -38,58 +38,88 @@ export default function AddCandidate() {
   });
 
   useEffect(() => {
-    apiFetch("/master-data")
-      .then(res => res.json())
-      .then(data => {
-        setMasterData(data);
-        // Set default dropdown values safely
-        setForm(prev => ({
-          ...prev,
-          job_role_id: data.job_roles?.[0]?.id || "",
-          client_id: data.clients?.[0]?.id || "",
-          office_mode_id: data.office_modes?.[0]?.id || "",
-          funnel_stage_id: data.funnel_stages?.[0]?.id || "",
-          contract_type_id: data.contract_types?.[0]?.id || "",
-          recruiter_id: data.recruiters?.[0]?.id || "",
-        }));
-      })
-      .catch(err => console.error("Error fetching master data:", err));
+    const loadMasterData = async () => {
+      const { data: job_roles } = await supabase.from("job_roles").select("*");
+      const { data: clients } = await supabase.from("clients").select("*");
+      const { data: funnel_stages } = await supabase.from("funnel_stages").select("*");
+      const { data: contract_types } = await supabase.from("contract_types").select("*");
+      const { data: office_modes } = await supabase.from("office_modes").select("*");
+      const { data: recruiters } = await supabase.from("users").select("*");
+
+      const data = {
+        job_roles: job_roles || [],
+        clients: clients || [],
+        funnel_stages: funnel_stages || [],
+        contract_types: contract_types || [],
+        office_modes: office_modes || [],
+        recruiters: recruiters || []
+      };
+
+      setMasterData(data);
+
+      setForm(prev => ({
+        ...prev,
+        job_role_id: data.job_roles[0]?.id || "",
+        client_id: data.clients[0]?.id || "",
+        office_mode_id: data.office_modes[0]?.id || "",
+        funnel_stage_id: data.funnel_stages[0]?.id || "",
+        contract_type_id: data.contract_types[0]?.id || "",
+        recruiter_id: data.recruiters[0]?.id || "",
+      }));
+    };
+
+    loadMasterData();
   }, []);
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
+ const handleSubmit = async (e) => {
+  e.preventDefault();
+  setLoading(true);
 
-    const formData = new FormData();
-    Object.keys(form).forEach(key => {
-      formData.append(key, form[key] || "");
-    });
+  try {
+    let resumeUrl = null;
+
+    // Upload resume to Supabase storage
     if (resumeFile) {
-      formData.append("resume", resumeFile);
+      const fileName = `${Date.now()}_${resumeFile.name}`;
+
+      const { data, error } = await supabase.storage
+        .from("resumes")
+        .upload(fileName, resumeFile);
+
+      if (error) throw error;
+
+      const { data: publicUrlData } = supabase.storage
+        .from("resumes")
+        .getPublicUrl(fileName);
+
+      resumeUrl = publicUrlData.publicUrl;
     }
 
-    try {
-      const response = await apiFetch("/candidates", {
-        method: "POST",
-        body: formData,
-      });
+    // Insert candidate into database
+    const { error } = await supabase
+      .from("candidates")
+      .insert([
+        {
+          ...form,
+          resume_url: resumeUrl
+        }
+      ]);
 
-      if (response.ok) {
-        navigate("/candidates"); // Redirect to candidate list
-      } else {
-        throw new Error("Failed to add candidate");
-      }
-    } catch (error) {
-      console.error("Error:", error);
-      alert("Something went wrong. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
+    if (error) throw error;
+
+    navigate("/candidates");
+
+  } catch (error) {
+    console.error(error);
+    alert("Failed to add candidate: " + error.message);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const inputClass = "w-full border border-gray-200/80 bg-gray-50/50 px-4 py-3 rounded-xl outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:bg-white transition-all text-sm font-medium placeholder:text-gray-400";
   const labelClass = "block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2";

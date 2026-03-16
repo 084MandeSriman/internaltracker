@@ -1,10 +1,10 @@
 import Layout from "../components/Layout";
 import { useEffect, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import { apiFetch } from "../services/api";
 import { Link, useLocation } from "react-router-dom";
 import { useContext } from "react";
 import { AuthContext } from "../context/AuthContext";
+import { supabase } from "../supabaseClient";
 
 export default function Dashboard() {
   const location = useLocation();
@@ -39,119 +39,158 @@ export default function Dashboard() {
 
   // Dashboard filter states
   const [search, setSearch] = useState("");
-  const [roleFilter, setRoleFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
+  const [roleFilter, setRoleFilter] = useState("");        // stores job_role_id
+  const [statusFilter, setStatusFilter] = useState("");    // stores funnel_stage_id
   const [masterData, setMasterData] = useState({ job_roles: [], funnel_stages: [], clients: [] });
 
-  useEffect(() => {
-    // Fetch master data for dropdowns
-    apiFetch("/master-data")
-      .then(res => res.json())
-      .then(data => {
-        setMasterData(data);
-      })
-      .catch(console.error);
+ useEffect(() => {
+  const loadDashboard = async () => {
+    try {
+      setLoading(true);
 
-    // Fetch dashboard stats
-    apiFetch("/dashboard/stats")
-      .then(res => res.json())
-      .then(data => {
-        setStats(data);
-        if (!isAdmin) setLoading(false);
-      })
-      .catch(err => {
-        console.error("Failed to load dashboard stats", err);
-        if (!isAdmin) setLoading(false);
+      const { data: roles } = await supabase.from("job_roles").select("*");
+      const { data: stages } = await supabase.from("funnel_stages").select("*");
+      const { data: clients } = await supabase.from("clients").select("*");
+
+      setMasterData({
+        job_roles: roles || [],
+        funnel_stages: stages || [],
+        clients: clients || []
       });
 
-    // Fetch Admin analytics if user is admin
-    if (isAdmin) {
-      apiFetch("/admin/analytics")
-        .then(res => res.json())
-        .then(data => {
-          setAdminStats(data);
-          setLoading(false);
-        })
-        .catch(err => {
-          console.error("Failed to load admin stats", err);
-          setLoading(false);
-        });
+      const { data: candidates } = await supabase
+        .from("candidates")
+        .select(`
+          *,
+          job_roles ( name ),
+          funnel_stages ( name )
+        `)
+        .order("created_at", { ascending: false });
 
-      apiFetch("/admin/users")
-        .then(res => res.json())
-        .then(data => setSystemUsers(data))
-        .catch(console.error);
+      const enrichedCandidates = (candidates || []).map(c => ({
+        ...c,
+        roleName: c.job_roles?.name,
+        statusName: c.funnel_stages?.name
+      }));
+
+      if (isAdmin) {
+        const { data: users } = await supabase.from("users").select("*");
+        setSystemUsers(users || []);
+      }
+
+      setStats({
+        total_candidates: enrichedCandidates.length,
+        open_positions: 0,
+        funnel_stats: [],
+        recent_candidates: enrichedCandidates.slice(0, 5),
+        placements_per_client: [],
+        candidates_per_role: []
+      });
+
+      setLoading(false);
+
+    } catch (err) {
+      console.error("Dashboard load error:", err);
+      setLoading(false);
     }
-  }, []);
+  };
+
+  loadDashboard();
+}, [isAdmin]);
 
   const handleEditUserSubmit = async (e) => {
     e.preventDefault();
     setSubmittingUser(true);
-    try {
-      const res = await apiFetch(`/admin/users/${editingUser.id}`, {
-        method: "PUT",
-        body: JSON.stringify(editingUser)
-      });
-      if (res.ok) {
-        setEditingUser(null);
-        const newUsers = await apiFetch("/admin/users").then(r => r.json());
-        setSystemUsers(newUsers);
-      } else {
-        const err = await res.json();
-        alert(err.message || "Failed to update user");
-      }
-    } catch (err) {
-      alert("Error updating user");
-    } finally {
-      setSubmittingUser(false);
+
+    const { error } = await supabase
+      .from("users")
+      .update({
+        name: editingUser.name,
+        email: editingUser.email,
+        role: editingUser.role,
+        client_id: editingUser.client_id
+      })
+      .eq("id", editingUser.id);
+
+    if (!error) {
+      setEditingUser(null);
+      const { data } = await supabase.from("users").select("*");
+      setSystemUsers(data || []);
+    } else {
+      alert("Failed to update user");
     }
+    setSubmittingUser(false);
   };
 
   const handleDeleteUser = async (userId) => {
-    if (!window.confirm("Are you sure you want to delete this user? This cannot be undone.")) return;
-    try {
-      const res = await apiFetch(`/admin/users/${userId}`, { method: "DELETE" });
-      if (res.ok) {
-        setSystemUsers(prev => prev.filter(u => u.id !== userId));
-      } else {
-        const err = await res.json();
-        alert(err.message || "Failed to delete user");
-      }
-    } catch (err) {
-      alert("Error deleting user");
+    if (!window.confirm("Delete this user?")) return;
+
+    const { error } = await supabase
+      .from("users")
+      .delete()
+      .eq("id", userId);
+
+    if (!error) {
+      setSystemUsers(prev => prev.filter(u => u.id !== userId));
+    } else {
+      alert("Failed to delete user");
     }
   };
 
   const handleAddClient = async (e) => {
     e.preventDefault();
     if (!newClientName.trim()) return;
+
     setSubmittingClient(true);
-    try {
-      const res = await apiFetch("/clients", {
-        method: "POST",
-        body: JSON.stringify({ name: newClientName })
-      });
-      if (res.ok) {
-        setClientModalOpen(false);
-        setNewClientName("");
-        // Reload dashboard stats and master data
-        const newStats = await apiFetch("/dashboard/stats").then(res => res.json());
-        setStats(newStats);
-        const newMasterData = await apiFetch("/master-data").then(res => res.json());
-        setMasterData(newMasterData);
-      } else {
-        const err = await res.json();
-        alert(err.message || "Failed to add client");
-      }
-    } catch (err) {
-      console.error(err);
-      alert("Error adding client");
-    } finally {
+    const { error } = await supabase
+      .from("clients")
+      .insert([{ name: newClientName }]);
+
+    if (error) {
+      alert("Failed to add client");
       setSubmittingClient(false);
+      return;
     }
+
+    setClientModalOpen(false);
+    setNewClientName("");
+
+    const { data: clients } = await supabase.from("clients").select("*");
+    setMasterData(prev => ({
+      ...prev,
+      clients: clients || []
+    }));
+    setSubmittingClient(false);
   };
 
-  // Format data for charts
+  // Filter candidates by search text and selected role/stage (using IDs)
+  const filteredCandidates = (stats.recent_candidates || []).filter(c => {
+    const matchesSearch =
+      search === "" || c.name?.toLowerCase().includes(search.toLowerCase());
+
+    const matchesRole =
+  roleFilter === "" || c.job_role_id === Number(roleFilter);
+
+const matchesStatus =
+  statusFilter === "" || c.funnel_stage_id === Number(statusFilter);
+
+    return matchesSearch && matchesRole && matchesStatus;
+  });
+
+  // Helper to get stage count (for pie chart)
+  const getStageCount = (stageNameMatch) => {
+    if (search || roleFilter || statusFilter) {
+      return filteredCandidates.filter(c =>
+        c.statusName?.toLowerCase().includes(stageNameMatch)
+      ).length;
+    }
+
+    return (stats.funnel_stats || [])
+      .filter(s => s.stage?.toLowerCase().includes(stageNameMatch))
+      .reduce((sum, s) => sum + s.count, 0);
+  };
+
+  // Format data for charts (still empty, but ready)
   const barChartData = (stats.candidates_per_role || []).map(item => ({
     role: item.role,
     count: item.count
@@ -165,34 +204,11 @@ export default function Dashboard() {
     color: COLORS[index % COLORS.length]
   })).filter(d => d.value > 0);
 
-  // Derive filtered stats dynamically
-  const filteredCandidates = (stats.recent_candidates || []).filter(c => {
-    const matchesSearch = search === "" || c.name.toLowerCase().includes(search.toLowerCase());
-    const matchesRole = roleFilter === "" || c.role === roleFilter;
-
-    // Status filter logic (since c.status is a string like "Screening", "Interview", etc)
-    const matchesStatus = statusFilter === "" || (c.status && c.status.toLowerCase().includes(statusFilter.toLowerCase()));
-
-    return matchesSearch && matchesRole && matchesStatus;
-  });
-
-  const getStageCount = (stageNameMatch) => {
-    // We derive these directly from the filtered Candidates list now if filters are active, 
-    // otherwise fallback to the aggregated funnel stats for the total overview
-    if (search || roleFilter || statusFilter) {
-      return filteredCandidates.filter(c => c.status?.toLowerCase().includes(stageNameMatch)).length;
-    }
-
-    return (stats.funnel_stats || [])
-      .filter(s => s.stage?.toLowerCase().includes(stageNameMatch))
-      .reduce((sum, s) => sum + s.count, 0);
-  };
-
+  // Dynamic pie data based on filters (simplified example)
   const interviewCount = getStageCount('interview');
   const selectedCount = getStageCount('hired') + getStageCount('offer');
   const rejectedCount = getStageCount('reject');
 
-  // Update pie chart if filtered
   let currentPieData = pieChartData;
   if (search || roleFilter || statusFilter) {
     currentPieData = [
@@ -203,7 +219,7 @@ export default function Dashboard() {
     ].filter(d => d.value > 0);
   }
 
-  // Admin Analytics Pie Chart
+  // Admin Analytics Pie Chart (empty for now)
   const rejectionPieData = (adminStats.rejection_analytics || []).map((item, index) => ({
     name: item.rejection_reason,
     value: item.count,
@@ -255,7 +271,7 @@ export default function Dashboard() {
           onChange={(e) => setRoleFilter(e.target.value)}
         >
           <option value="">All Roles</option>
-          {masterData.job_roles?.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+          {masterData.job_roles?.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
 
         <select
@@ -264,7 +280,7 @@ export default function Dashboard() {
           onChange={(e) => setStatusFilter(e.target.value)}
         >
           <option value="">All Stages</option>
-          {masterData.funnel_stages?.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+          {masterData.funnel_stages?.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
 
         {(search || roleFilter || statusFilter) && (
@@ -481,20 +497,20 @@ export default function Dashboard() {
                         <tr key={index} className="hover:bg-gray-50/80 transition-colors group">
                           <td className="py-5 font-bold text-gray-700 text-sm flex items-center gap-3">
                             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center text-gray-500 font-bold text-xs uppercase shadow-sm">
-                              {c.name.charAt(0)}
+                             {c.name?.charAt(0)}
                             </div>
                             {c.name}
                           </td>
-                          <td className="py-5 text-gray-500 text-sm font-medium">{c.role || '-'}</td>
+                          <td className="py-5 text-gray-500 text-sm font-medium">{c.roleName || '-'}</td>
                           <td className="py-5">
                             <span className={`px-3 py-1.5 rounded-lg text-xs font-bold tracking-wide shadow-sm
-                          ${c.status?.toLowerCase().includes('hired') || c.status?.toLowerCase().includes('offer') ? "bg-green-50 text-green-700 border-green-100" : ""}
-                          ${c.status?.toLowerCase().includes('interview') ? "bg-blue-50 text-blue-700 border-blue-100" : ""}
-                          ${c.status?.toLowerCase().includes('reject') ? "bg-red-50 text-red-700 border-red-100" : ""}
-                          ${(!c.status || c.status?.toLowerCase().includes('screen') || c.status?.toLowerCase().includes('sourced')) ? "bg-gray-50 text-gray-700 border-gray-200" : ""}
+                          ${c.statusName?.toLowerCase().includes('hired') || c.statusName?.toLowerCase().includes('offer') ? "bg-green-50 text-green-700 border-green-100" : ""}
+                          ${c.statusName?.toLowerCase().includes('interview') ? "bg-blue-50 text-blue-700 border-blue-100" : ""}
+                          ${c.statusName?.toLowerCase().includes('reject') ? "bg-red-50 text-red-700 border-red-100" : ""}
+                          ${(!c.statusName || c.statusName?.toLowerCase().includes('screen') || c.statusName?.toLowerCase().includes('sourced')) ? "bg-gray-50 text-gray-700 border-gray-200" : ""}
                           border
                         `}>
-                              {c.status || 'Pending'}
+                              {c.statusName || 'Pending'}
                             </span>
                           </td>
                         </tr>

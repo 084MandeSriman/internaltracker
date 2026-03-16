@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import Layout from "../components/Layout";
-import { apiFetch } from "../services/api";
+import { supabase } from "../supabaseClient";
 
 export default function DataValidation() {
     const [masterData, setMasterData] = useState({
@@ -14,16 +14,32 @@ export default function DataValidation() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        apiFetch("/master-data")
-            .then(res => res.json())
-            .then(data => {
-                setMasterData(data);
+        const loadMasterData = async () => {
+            try {
+                const { data: job_roles } = await supabase.from("job_roles").select("*");
+                const { data: clients } = await supabase.from("clients").select("*");
+                const { data: funnel_stages } = await supabase.from("funnel_stages").select("*");
+                const { data: contract_types } = await supabase.from("contract_types").select("*");
+                const { data: office_modes } = await supabase.from("office_modes").select("*");
+                const { data: recruiters } = await supabase.from("users").select("*");
+
+                setMasterData({
+                    job_roles: job_roles || [],
+                    clients: clients || [],
+                    funnel_stages: funnel_stages || [],
+                    contract_types: contract_types || [],
+                    office_modes: office_modes || [],
+                    recruiters: recruiters || []
+                });
+
                 setLoading(false);
-            })
-            .catch(err => {
+            } catch (err) {
                 console.error("Failed to load master data", err);
                 setLoading(false);
-            });
+            }
+        };
+
+        loadMasterData();
     }, []);
 
     const DataCard = ({ title, items, icon, colorClass }) => (

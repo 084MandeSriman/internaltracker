@@ -1,27 +1,64 @@
-import { useState } from "react";
-import axios from "axios";
+import { useState, useEffect } from "react";
+import { supabase } from "../supabaseClient";
 
 export default function Register() {
   const [form, setForm] = useState({
     name: "",
     email: "",
     role: "hr",
-    client: ""
+    client_id: "" // store client id as string from select
   });
+  const [clients, setClients] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  // Load clients for dropdown
+  useEffect(() => {
+    const loadClients = async () => {
+      const { data, error } = await supabase.from("clients").select("id, name");
+      if (error) {
+        console.error("Error loading clients:", error);
+      } else {
+        setClients(data || []);
+      }
+    };
+    loadClients();
+  }, []);
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
   const handleRegister = async () => {
+    setLoading(true);
     try {
-      const res = await axios.post("http://localhost:5000/register", form);
-      alert(res.data.message || "User Created! An email has been sent to set their password. ✅");
-      // Reset form
-      setForm({ name: "", email: "", role: "hr", client: "" });
+      // Insert user with required fields
+      const { data, error } = await supabase
+        .from("users")
+        .insert([
+          {
+            name: form.name,
+            email: form.email,
+            password: "temp123", // temporary password; should be hashed or use auth later
+            role: form.role,
+            client_id: form.role === "client" && form.client_id ? parseInt(form.client_id) : null
+          }
+        ]);
+
+      if (error) throw error;
+
+      alert("User created successfully ✅");
+
+      setForm({
+        name: "",
+        email: "",
+        role: "hr",
+        client_id: ""
+      });
     } catch (err) {
-      console.log(err);
-      alert(err.response?.data?.message || "Error registering user. Please try again.");
+      console.error(err);
+      alert("Error creating user: " + err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -39,6 +76,7 @@ export default function Register() {
               placeholder="e.g. John Doe"
               className="w-full border border-gray-200 p-2.5 rounded-xl focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all"
               onChange={handleChange}
+              required
             />
           </div>
 
@@ -46,10 +84,12 @@ export default function Register() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <input
               name="email"
+              type="email"
               value={form.email}
               placeholder="e.g. john@example.com"
               className="w-full border border-gray-200 p-2.5 rounded-xl focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all"
               onChange={handleChange}
+              required
             />
           </div>
 
@@ -69,23 +109,29 @@ export default function Register() {
 
           {form.role === "client" && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Client Name / Company</label>
-              <input
-                name="client"
-                value={form.client}
-                placeholder="e.g. Acme Corp"
-                className="w-full border border-gray-200 p-2.5 rounded-xl focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all"
+              <label className="block text-sm font-medium text-gray-700 mb-1">Client</label>
+              <select
+                name="client_id"
+                value={form.client_id}
                 onChange={handleChange}
-              />
+                className="w-full border border-gray-200 p-2.5 rounded-xl focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all bg-white"
+                required
+              >
+                <option value="">Select a client</option>
+                {clients.map(client => (
+                  <option key={client.id} value={client.id}>{client.name}</option>
+                ))}
+              </select>
             </div>
           )}
         </div>
 
         <button
           onClick={handleRegister}
-          className="w-full mt-6 bg-gradient-to-r from-teal-500 to-teal-600 text-white font-semibold py-3 rounded-xl hover:from-teal-600 hover:to-teal-700 transition-all shadow-sm shadow-teal-500/30"
+          disabled={loading}
+          className="w-full mt-6 bg-gradient-to-r from-teal-500 to-teal-600 text-white font-semibold py-3 rounded-xl hover:from-teal-600 hover:to-teal-700 transition-all shadow-sm shadow-teal-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Create User & Send Email
+          {loading ? "Creating..." : "Create User & Send Email"}
         </button>
       </div>
     </div>
