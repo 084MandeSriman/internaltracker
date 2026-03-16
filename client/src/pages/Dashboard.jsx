@@ -43,60 +43,117 @@ export default function Dashboard() {
   const [statusFilter, setStatusFilter] = useState("");    // stores funnel_stage_id
   const [masterData, setMasterData] = useState({ job_roles: [], funnel_stages: [], clients: [] });
 
- useEffect(() => {
-  const loadDashboard = async () => {
-    try {
-      setLoading(true);
+  useEffect(() => {
+    const loadDashboard = async () => {
+      try {
+        setLoading(true);
 
-      const { data: roles } = await supabase.from("job_roles").select("*");
-      const { data: stages } = await supabase.from("funnel_stages").select("*");
-      const { data: clients } = await supabase.from("clients").select("*");
+        // Load master data in parallel
+        const [rolesRes, stagesRes, clientsRes] = await Promise.all([
+          supabase.from("job_roles").select("*"),
+          supabase.from("funnel_stages").select("*"),
+          supabase.from("clients").select("*")
+        ]);
 
-      setMasterData({
-        job_roles: roles || [],
-        funnel_stages: stages || [],
-        clients: clients || []
-      });
+        const roles = rolesRes.data || [];
+        const stages = stagesRes.data || [];
+        const clients = clientsRes.data || [];
 
-      const { data: candidates } = await supabase
-        .from("candidates")
-        .select(`
-          *,
-          job_roles ( name ),
-          funnel_stages ( name )
-        `)
-        .order("created_at", { ascending: false });
+        setMasterData({
+          job_roles: roles,
+          funnel_stages: stages,
+          clients: clients
+        });
 
-      const enrichedCandidates = (candidates || []).map(c => ({
-        ...c,
-        roleName: c.job_roles?.name,
-        statusName: c.funnel_stages?.name
-      }));
+        // Load candidates with joined data
+        const { data: candidates } = await supabase
+          .from("candidates")
+          .select(`
+            *,
+            job_roles ( name ),
+            funnel_stages ( name ),
+            clients ( name )
+          `)
+          .order("created_at", { ascending: false });
 
-      if (isAdmin) {
-        const { data: users } = await supabase.from("users").select("*");
-        setSystemUsers(users || []);
+        const enrichedCandidates = (candidates || []).map(c => ({
+          ...c,
+          roleName: c.job_roles?.name,
+          statusName: c.funnel_stages?.name,
+          clientName: c.clients?.name
+        }));
+
+        // Compute per‑role counts
+        const roleCounts = {};
+        enrichedCandidates.forEach(c => {
+          const role = c.roleName || "Unknown";
+          roleCounts[role] = (roleCounts[role] || 0) + 1;
+        });
+        const candidatesPerRole = Object.keys(roleCounts).map(role => ({
+          role,
+          count: roleCounts[role]
+        }));
+
+        // Compute funnel stage counts
+        const stageCounts = {};
+        enrichedCandidates.forEach(c => {
+          const stage = c.statusName || "Unknown";
+          stageCounts[stage] = (stageCounts[stage] || 0) + 1;
+        });
+        const funnelStats = Object.keys(stageCounts).map(stage => ({
+          stage,
+          count: stageCounts[stage]
+        }));
+
+        // Compute placements per client (hired/offer)
+        const clientCounts = {};
+        enrichedCandidates
+          .filter(c => c.statusName?.toLowerCase().includes("hired") || c.statusName?.toLowerCase().includes("offer"))
+          .forEach(c => {
+            const client = c.clientName || "Unknown";
+            clientCounts[client] = (clientCounts[client] || 0) + 1;
+          });
+        const placementsPerClient = Object.keys(clientCounts).map(client => ({
+          client,
+          count: clientCounts[client]
+        }));
+
+        // Load users with client names (admin only)
+        if (isAdmin) {
+          const { data: users } = await supabase
+            .from("users")
+            .select(`
+              *,
+              clients ( name )
+            `);
+
+          setSystemUsers(
+            (users || []).map(u => ({
+              ...u,
+              client_name: u.clients?.name
+            }))
+          );
+        }
+
+        setStats({
+          total_candidates: enrichedCandidates.length,
+          open_positions: 0,
+          funnel_stats: funnelStats,
+          recent_candidates: enrichedCandidates.slice(0, 5),
+          placements_per_client: placementsPerClient,
+          candidates_per_role: candidatesPerRole
+        });
+
+        setLoading(false);
+
+      } catch (err) {
+        console.error("Dashboard load error:", err);
+        setLoading(false);
       }
+    };
 
-      setStats({
-        total_candidates: enrichedCandidates.length,
-        open_positions: 0,
-        funnel_stats: [],
-        recent_candidates: enrichedCandidates.slice(0, 5),
-        placements_per_client: [],
-        candidates_per_role: []
-      });
-
-      setLoading(false);
-
-    } catch (err) {
-      console.error("Dashboard load error:", err);
-      setLoading(false);
-    }
-  };
-
-  loadDashboard();
-}, [isAdmin]);
+    loadDashboard();
+  }, [isAdmin]);
 
   const handleEditUserSubmit = async (e) => {
     e.preventDefault();
@@ -114,8 +171,13 @@ export default function Dashboard() {
 
     if (!error) {
       setEditingUser(null);
-      const { data } = await supabase.from("users").select("*");
-      setSystemUsers(data || []);
+      const { data } = await supabase
+        .from("users")
+        .select(`
+          *,
+          clients ( name )
+        `);
+      setSystemUsers((data || []).map(u => ({ ...u, client_name: u.clients?.name })));
     } else {
       alert("Failed to update user");
     }
@@ -169,10 +231,10 @@ export default function Dashboard() {
       search === "" || c.name?.toLowerCase().includes(search.toLowerCase());
 
     const matchesRole =
-  roleFilter === "" || c.job_role_id === Number(roleFilter);
+      roleFilter === "" || c.job_role_id === Number(roleFilter);
 
-const matchesStatus =
-  statusFilter === "" || c.funnel_stage_id === Number(statusFilter);
+    const matchesStatus =
+      statusFilter === "" || c.funnel_stage_id === Number(statusFilter);
 
     return matchesSearch && matchesRole && matchesStatus;
   });
@@ -190,7 +252,7 @@ const matchesStatus =
       .reduce((sum, s) => sum + s.count, 0);
   };
 
-  // Format data for charts (still empty, but ready)
+  // Format data for charts
   const barChartData = (stats.candidates_per_role || []).map(item => ({
     role: item.role,
     count: item.count

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { apiFetch } from "../services/api";
 import Layout from "../components/Layout";
+import { supabase } from "../supabaseClient";
 
 export default function EditCandidate() {
     const t = (key) => key;
@@ -27,7 +27,7 @@ export default function EditCandidate() {
         phone: "",
         location: "",
         experience: "",
-        skills: "",
+        skills: "", // will map to primary_skills
         job_role_id: "",
         client_id: "",
         office_mode_id: "",
@@ -40,51 +40,72 @@ export default function EditCandidate() {
         recruiter_id: ""
     });
 
+    // Load master data and candidate data
     useEffect(() => {
-        apiFetch("/master-data")
-            .then(res => res.json())
-            .then(data => {
-                setMasterData(data);
-                fetchCandidateData(data);
-            })
-            .catch(err => {
+        const loadMasterData = async () => {
+            try {
+                const { data: job_roles } = await supabase.from("job_roles").select("*");
+                const { data: clients } = await supabase.from("clients").select("*");
+                const { data: funnel_stages } = await supabase.from("funnel_stages").select("*");
+                const { data: contract_types } = await supabase.from("contract_types").select("*");
+                const { data: office_modes } = await supabase.from("office_modes").select("*");
+                const { data: recruiters } = await supabase.from("users").select("*");
+
+                const md = {
+                    job_roles: job_roles || [],
+                    clients: clients || [],
+                    funnel_stages: funnel_stages || [],
+                    contract_types: contract_types || [],
+                    office_modes: office_modes || [],
+                    recruiters: recruiters || []
+                };
+
+                setMasterData(md);
+                await fetchCandidateData(md);
+            } catch (err) {
                 console.error("Error fetching master data:", err);
                 setFetching(false);
-            });
+            }
+        };
+
+        loadMasterData();
     }, [id]);
 
-    const fetchCandidateData = (md) => {
-        apiFetch(`/candidates/${id}`)
-            .then(res => {
-                if (!res.ok) throw new Error("Candidate not found");
-                return res.json();
-            })
-            .then(candidate => {
-                setForm({
-                    name: candidate.name || "",
-                    email: candidate.email || "",
-                    phone: candidate.phone || "",
-                    location: candidate.location || "",
-                    experience: candidate.experience !== null ? candidate.experience : "",
-                    skills: candidate.primary_skills || "",
-                    job_role_id: candidate.job_role_id || md.job_roles?.[0]?.id || "",
-                    client_id: candidate.client_id || md.clients?.[0]?.id || "",
-                    office_mode_id: candidate.office_mode_id || md.office_modes?.[0]?.id || "",
-                    funnel_stage_id: candidate.funnel_stage_id || md.funnel_stages?.[0]?.id || "",
-                    contract_type_id: candidate.contract_type_id || md.contract_types?.[0]?.id || "",
-                    expected_ctc: candidate.expected_ctc || "",
-                    current_ctc: candidate.current_ctc || "",
-                    job_location: candidate.job_location || "",
-                    submission_date: candidate.submission_date || "",
-                    recruiter_id: candidate.recruiter_id || md.recruiters?.[0]?.id || ""
-                });
-                setFetching(false);
-            })
-            .catch(err => {
-                console.error("Error fetching candidate:", err);
-                alert("Failed to load candidate data.");
-                navigate("/candidates");
+    const fetchCandidateData = async (md) => {
+        try {
+            const { data: candidate, error } = await supabase
+                .from("candidates")
+                .select("*")
+                .eq("id", id)
+                .single();
+
+            if (error) throw error;
+
+            setForm({
+                name: candidate.name || "",
+                email: candidate.email || "",
+                phone: candidate.phone || "",
+                location: candidate.location || "",
+                experience: candidate.experience ?? "",
+                skills: candidate.primary_skills || "",
+                job_role_id: candidate.job_role_id || md.job_roles?.[0]?.id || "",
+                client_id: candidate.client_id || md.clients?.[0]?.id || "",
+                office_mode_id: candidate.office_mode_id || md.office_modes?.[0]?.id || "",
+                funnel_stage_id: candidate.funnel_stage_id || md.funnel_stages?.[0]?.id || "",
+                contract_type_id: candidate.contract_type_id || md.contract_types?.[0]?.id || "",
+                expected_ctc: candidate.expected_ctc || "",
+                current_ctc: candidate.current_ctc || "",
+                job_location: candidate.job_location || "",
+                submission_date: candidate.submission_date || "",
+                recruiter_id: candidate.recruiter_id || md.recruiters?.[0]?.id || ""
             });
+        } catch (err) {
+            console.error("Error fetching candidate:", err);
+            alert("Failed to load candidate data.");
+            navigate("/candidates");
+        } finally {
+            setFetching(false);
+        }
     };
 
     const handleChange = (e) => {
@@ -96,25 +117,50 @@ export default function EditCandidate() {
         setLoading(true);
 
         try {
-            const formData = new FormData();
-            Object.keys(form).forEach(key => {
-                formData.append(key, form[key] || "");
-            });
+            // Prepare update object
+            const updateData = {
+                name: form.name,
+                email: form.email,
+                phone: form.phone,
+                location: form.location,
+                experience: form.experience ? parseInt(form.experience) : null,
+                primary_skills: form.skills,
+                job_role_id: form.job_role_id,
+                client_id: form.client_id,
+                office_mode_id: form.office_mode_id,
+                funnel_stage_id: form.funnel_stage_id,
+                contract_type_id: form.contract_type_id,
+                expected_ctc: form.expected_ctc,
+                current_ctc: form.current_ctc,
+                job_location: form.job_location,
+                submission_date: form.submission_date,
+                recruiter_id: form.recruiter_id
+            };
+
+            // Handle resume upload if new file selected
             if (resumeFile) {
-                formData.append("resume", resumeFile);
+                const fileName = `${Date.now()}_${resumeFile.name}`;
+                const { error: uploadError } = await supabase.storage
+                    .from("resumes")
+                    .upload(fileName, resumeFile);
+
+                if (uploadError) throw uploadError;
+
+                const { data } = supabase.storage
+                    .from("resumes")
+                    .getPublicUrl(fileName);
+
+                updateData.resume_url = data.publicUrl;
             }
 
-            const response = await apiFetch(`/candidates/${id}`, {
-                method: "PUT",
-                body: formData,
-            });
+            const { error } = await supabase
+                .from("candidates")
+                .update(updateData)
+                .eq("id", id);
 
-            if (response.ok) {
-                navigate("/candidates");
-            } else {
-                const errData = await response.json();
-                throw new Error(errData.message || "Failed to update candidate");
-            }
+            if (error) throw error;
+
+            navigate("/candidates");
         } catch (error) {
             console.error("Error:", error);
             alert(error.message || "Something went wrong. Please try again.");
