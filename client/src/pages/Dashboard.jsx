@@ -291,7 +291,7 @@ export default function Dashboard() {
   return (
     <Layout>
       {/* 🚀 Header: Branding & Quick Action Buttons */}
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         <div>
           <h1 className="text-3xl font-bold bg-gradient-to-r from-teal-600 to-blue-600 bg-clip-text text-transparent drop-shadow-sm">
             Galacticos
@@ -299,11 +299,11 @@ export default function Dashboard() {
           <p className="text-sm text-gray-500 mt-1 font-medium tracking-wide">Recruitment Overview</p>
         </div>
 
-        <div className="flex gap-4">
-          <Link to="/candidates" className="bg-white hover:bg-gray-50 px-5 py-2.5 rounded-xl text-sm font-semibold transition text-gray-700 border border-gray-200 shadow-sm flex items-center gap-2">
+        <div className="flex gap-2 w-full sm:w-auto">
+          <Link to="/candidates" className="flex-1 sm:flex-none bg-white hover:bg-gray-50 px-4 py-2.5 rounded-xl text-sm font-semibold transition text-gray-700 border border-gray-200 shadow-sm flex items-center justify-center gap-2">
             View All Candidates
           </Link>
-          <Link to="/add" className="bg-gradient-to-r from-teal-500 to-teal-600 hover:from-teal-600 hover:to-teal-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition shadow-md shadow-teal-200 flex items-center gap-2">
+          <Link to="/add" className="flex-1 sm:flex-none bg-gradient-to-r from-teal-500 to-teal-600 hover:from-teal-600 hover:to-teal-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition shadow-md shadow-teal-200 flex items-center justify-center gap-2">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
             </svg>
@@ -328,7 +328,7 @@ export default function Dashboard() {
         </div>
 
         <select
-          className="md:w-48 px-4 py-2.5 rounded-xl border border-gray-200 focus:border-teal-500 outline-none text-sm text-gray-600 bg-white shadow-sm"
+          className="w-full md:w-48 px-4 py-2.5 rounded-xl border border-gray-200 focus:border-teal-500 outline-none text-sm text-gray-600 bg-white shadow-sm"
           value={roleFilter}
           onChange={(e) => setRoleFilter(e.target.value)}
         >
@@ -337,7 +337,7 @@ export default function Dashboard() {
         </select>
 
         <select
-          className="md:w-48 px-4 py-2.5 rounded-xl border border-gray-200 focus:border-teal-500 outline-none text-sm text-gray-600 bg-white shadow-sm"
+          className="w-full md:w-48 px-4 py-2.5 rounded-xl border border-gray-200 focus:border-teal-500 outline-none text-sm text-gray-600 bg-white shadow-sm"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
         >
@@ -362,7 +362,7 @@ export default function Dashboard() {
       ) : (
         <>
           {/* 🚀 KPI Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
             {[
               { title: "Conversion Rate", value: `${stats.conversion_rate || 0}%`, trend: "Screening → Selected", iconColor: "text-emerald-500", bgIcon: "bg-emerald-50", icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg> },
               { title: "Stuck in Interview", value: stats.stuck_candidates || 0, trend: "> 7 days warning", iconColor: "text-rose-500", bgIcon: "bg-rose-50", icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
@@ -397,7 +397,7 @@ export default function Dashboard() {
                 <h3 className="text-lg font-bold text-gray-800">Candidates by Role</h3>
                 <p className="text-sm text-gray-400 mt-1">Distribution across all open positions</p>
               </div>
-              <div className="h-72">
+              <div className="h-64 sm:h-72">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={barChartData} margin={{ top: 10, right: 10, left: -10, bottom: 40 }}>
                     <XAxis dataKey="role" axisLine={false} tickLine={false} tick={{ fill: '#9ca3af', fontSize: 11 }} angle={-45} textAnchor="end" height={60} dy={10} interval={0} />
@@ -418,14 +418,14 @@ export default function Dashboard() {
                 <h3 className="text-lg font-bold text-gray-800">{isAdmin && isAnalyticsPage ? "Rejection Reasons Analytics" : "Pipeline Distribution"}</h3>
                 <p className="text-sm text-gray-400 mt-1">{isAdmin && isAnalyticsPage ? "Why candidates are dropping out" : "Breakdown of current funnel stages"}</p>
               </div>
-              <div className="flex-1 flex items-center justify-center h-72">
+              <div className="flex-1 flex items-center justify-center h-64 sm:h-72">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
                       data={isAdmin && isAnalyticsPage && rejectionPieData.length > 0 ? rejectionPieData : currentPieData}
                       dataKey="value"
-                      innerRadius={80}
-                      outerRadius={110}
+                      innerRadius="60%"
+                      outerRadius="80%"
                       paddingAngle={5}
                       stroke="none"
                       cornerRadius={8}
@@ -471,63 +471,61 @@ export default function Dashboard() {
 
           {/* 🚀 System Users Table (Admin Only) */}
           {isAdmin && !isAnalyticsPage && (
-            <div className="mb-8 bg-white p-7 rounded-3xl shadow-sm border border-gray-100/60">
+            <div className="mb-8 bg-white p-7 rounded-3xl shadow-sm border border-gray-100/60 overflow-x-auto">
               <div className="flex justify-between items-center mb-6">
                 <div>
                   <h2 className="text-lg font-bold text-gray-800">System Users</h2>
                   <p className="text-sm text-gray-400 mt-1">Manage HR and Client accounts</p>
                 </div>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="text-gray-400 text-xs uppercase tracking-wider border-b border-gray-100">
-                      <th className="pb-4 pt-2 font-semibold">User</th>
-                      <th className="pb-4 pt-2 font-semibold">Email</th>
-                      <th className="pb-4 pt-2 font-semibold">Role</th>
-                      <th className="pb-4 pt-2 font-semibold">Client</th>
-                      <th className="pb-4 pt-2 font-semibold text-right">Actions</th>
+              <table className="w-full text-left min-w-[600px]">
+                <thead>
+                  <tr className="text-gray-400 text-xs uppercase tracking-wider border-b border-gray-100">
+                    <th className="pb-4 pt-2 font-semibold">User</th>
+                    <th className="pb-4 pt-2 font-semibold">Email</th>
+                    <th className="pb-4 pt-2 font-semibold">Role</th>
+                    <th className="pb-4 pt-2 font-semibold">Client</th>
+                    <th className="pb-4 pt-2 font-semibold text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {systemUsers.map((u) => (
+                    <tr key={u.id} className="hover:bg-gray-50/80 transition-colors group">
+                      <td className="py-4 font-bold text-gray-700 text-sm flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-100 to-purple-200 flex items-center justify-center text-indigo-500 font-bold text-xs uppercase shadow-sm">
+                          {u.name.charAt(0)}
+                        </div>
+                        {u.name}
+                      </td>
+                      <td className="py-4 text-gray-500 text-sm">{u.email}</td>
+                      <td className="py-4">
+                        <span className={`px-2.5 py-1 rounded-lg text-xs font-bold tracking-wide shadow-sm
+                          ${u.role === 'admin' ? "bg-red-50 text-red-700 border-red-100" : ""}
+                          ${u.role === 'hr' ? "bg-blue-50 text-blue-700 border-blue-100" : ""}
+                          ${u.role === 'client' ? "bg-teal-50 text-teal-700 border-teal-100" : ""}
+                          border
+                        `}>
+                          {u.role.toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="py-4 text-gray-500 text-sm">{u.client_name || '-'}</td>
+                      <td className="py-4 text-right">
+                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => setEditingUser(u)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition" title="Edit User">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                          </button>
+                          <button onClick={() => handleDeleteUser(u.id)} className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition" title="Delete User">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                        </div>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {systemUsers.map((u) => (
-                      <tr key={u.id} className="hover:bg-gray-50/80 transition-colors group">
-                        <td className="py-4 font-bold text-gray-700 text-sm flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-100 to-purple-200 flex items-center justify-center text-indigo-500 font-bold text-xs uppercase shadow-sm">
-                            {u.name.charAt(0)}
-                          </div>
-                          {u.name}
-                        </td>
-                        <td className="py-4 text-gray-500 text-sm">{u.email}</td>
-                        <td className="py-4">
-                          <span className={`px-2.5 py-1 rounded-lg text-xs font-bold tracking-wide shadow-sm
-                            ${u.role === 'admin' ? "bg-red-50 text-red-700 border-red-100" : ""}
-                            ${u.role === 'hr' ? "bg-blue-50 text-blue-700 border-blue-100" : ""}
-                            ${u.role === 'client' ? "bg-teal-50 text-teal-700 border-teal-100" : ""}
-                            border
-                          `}>
-                            {u.role.toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="py-4 text-gray-500 text-sm">{u.client_name || '-'}</td>
-                        <td className="py-4 text-right">
-                          <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => setEditingUser(u)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition" title="Edit User">
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                            </button>
-                            <button onClick={() => handleDeleteUser(u.id)} className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition" title="Delete User">
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {systemUsers.length === 0 && (
-                  <div className="text-center py-10 text-gray-500 text-sm">No users found.</div>
-                )}
-              </div>
+                  ))}
+                </tbody>
+              </table>
+              {systemUsers.length === 0 && (
+                <div className="text-center py-10 text-gray-500 text-sm">No users found.</div>
+              )}
             </div>
           )}
 
@@ -640,7 +638,7 @@ export default function Dashboard() {
       {/* 🚀 Edit User Modal */}
       {editingUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-xl border border-gray-100 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-2xl shadow-xl border border-gray-100 w-full max-w-sm sm:max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
               <h3 className="font-bold text-gray-800 text-lg">Edit System User</h3>
               <button onClick={() => setEditingUser(null)} className="text-gray-400 hover:text-gray-600">

@@ -49,7 +49,7 @@ export default function EditCandidate() {
                 const { data: funnel_stages } = await supabase.from("funnel_stages").select("*");
                 const { data: contract_types } = await supabase.from("contract_types").select("*");
                 const { data: office_modes } = await supabase.from("office_modes").select("*");
-                const { data: recruiters } = await supabase.from("users").select("*");
+                const { data: recruiters } = await supabase.from("recruiters").select("*");
 
                 const md = {
                     job_roles: job_roles || [],

@@ -71,7 +71,7 @@ export default function Candidates() {
         const { data: stages } = await supabase.from("funnel_stages").select("*");
         const { data: contractTypes } = await supabase.from("contract_types").select("*");
         const { data: officeModes } = await supabase.from("office_modes").select("*");
-        const { data: recruiters } = await supabase.from("users").select("*");
+        const { data: recruiters } = await supabase.from("recruiters").select("*");
 
         setMasterData({
           job_roles: roles || [],
@@ -101,7 +101,7 @@ export default function Candidates() {
     funnel_stages:funnel_stage_id(name),
     office_modes:office_mode_id(name),
     contract_types:contract_type_id(name),
-    users:recruiter_id(name)
+    recruiters!candidates_recruiter_id_fkey(name)
   `, { count: "exact" });
 
       // Apply filters
@@ -167,7 +167,7 @@ export default function Candidates() {
         status: c.funnel_stages?.name,
         office_mode: c.office_modes?.name,
         contract_type: c.contract_types?.name,
-        recruiter: c.users?.name
+        recruiter: c.recruiters?.name
       }));
 
       setData(formatted);
@@ -353,7 +353,8 @@ export default function Candidates() {
         job_role: "job_roles",
         office_mode: "office_modes",
         client: "clients",
-        contract_type: "contract_types"
+        contract_type: "contract_types",
+        recruiter: "recruiters"
       };
 
       const table = tableMap[type];
@@ -674,7 +675,7 @@ export default function Candidates() {
           const funnelStageId = await findIdByName(masterData.funnel_stages, funnelStageValue);
 
           const recruiterValue = getColumnValue(row, 'RECRUITER', 'Recruiter');
-          const recruiterId = await findIdByName(masterData.recruiters, recruiterValue);
+          const recruiterId = await findIdByName(masterData.recruiters, recruiterValue, 'recruiter');
 
           // Handle submission date: Excel may store it as a number (serial date) or a string
           const excelDate = getColumnValue(row, 'SUBMISSION DATE', 'Submission Date');
@@ -914,21 +915,37 @@ export default function Candidates() {
                       <td className="px-6 py-5">{displayContractType(c)}</td>
                       <td className="px-6 py-5">{c.experience ? `${c.experience} Years` : "-"}</td>
                       <td className="px-6 py-5">
-                        <div className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Primary: <span className="text-gray-700 font-bold">{c.primary_skills || "-"}</span></div>
-                        <div className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mt-1">Secondary: <span className="text-teal-600 font-bold">{c.secondary_skills || "-"}</span></div>
+                        <div className="text-[11px] font-medium text-gray-400 uppercase tracking-wide"><span className="text-gray-700 font-bold">{c.primary_skills || ""}</span></div>
+                        <div className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mt-1"><span className="text-teal-600 font-bold">{c.secondary_skills || ""}</span></div>
                       </td>
-                      <td className="px-6 py-5">
+                      {/* REPLACED CLIENT FEEDBACK TD WITH STOP PROPAGATION */}
+                      <td
+                        className="px-6 py-5"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <div className={`px-2.5 py-1 rounded text-[10px] font-bold inline-block border uppercase tracking-wider ${getClientStatusColor(c.client_status)}`}>
                           {c.client_status || 'Pending'}
                         </div>
+
                         {c.client_feedback && (
                           <div className="text-[11px] text-gray-500 mt-1.5 max-w-[140px] truncate" title={c.client_feedback}>
                             {c.client_feedback}
                           </div>
                         )}
-                        {user?.role === 'client' && (
-                          <button onClick={(e) => { e.stopPropagation(); setClientFeedbackModal(c); setClientStatus(c.client_status || 'Pending'); setClientFeedback(c.client_feedback || ''); }} className="mt-2 text-[10px] text-blue-500 font-bold hover:underline flex items-center gap-1">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+
+                        {(user?.role === 'client' || user?.role === 'admin') && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setClientFeedbackModal(c);
+                              setClientStatus(c.client_status || 'Pending');
+                              setClientFeedback(c.client_feedback || '');
+                            }}
+                            className="mt-2 text-[10px] text-blue-500 font-bold hover:underline flex items-center gap-1"
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
                             Provide Review
                           </button>
                         )}
@@ -1027,23 +1044,41 @@ export default function Candidates() {
       {clientFeedbackModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
           <div className="bg-white w-full max-w-[500px] p-8 rounded-3xl shadow-2xl animate-in fade-in zoom-in duration-200">
+
+            {/* HEADER */}
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-2xl font-bold text-gray-800">Candidate Feedback</h2>
-              <button onClick={() => setClientFeedbackModal(null)} className="text-gray-400 hover:text-gray-600">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              <button
+                onClick={() => setClientFeedbackModal(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             </div>
 
             <div className="space-y-5">
+
+              {/* STATUS */}
               <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Status</label>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">
+                  Status
+                </label>
                 <div className="flex gap-3">
                   {['Pending', 'Approved', 'Rejected'].map(status => (
                     <button
                       key={status}
-                      onClick={() => setClientStatus(status)}
+                      onClick={() => {
+                        console.log("Status selected:", status);
+                        setClientStatus(status);
+                      }}
                       className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition-all ${clientStatus === status
-                        ? (status === 'Approved' ? 'bg-green-100 border-green-500 text-green-700' : status === 'Rejected' ? 'bg-red-100 border-red-500 text-red-700' : 'bg-yellow-100 border-yellow-500 text-yellow-700')
+                        ? status === 'Approved'
+                          ? 'bg-green-100 border-green-500 text-green-700'
+                          : status === 'Rejected'
+                            ? 'bg-red-100 border-red-500 text-red-700'
+                            : 'bg-yellow-100 border-yellow-500 text-yellow-700'
                         : 'bg-white border-gray-200 text-gray-400 hover:border-gray-300'
                         }`}
                     >
@@ -1053,49 +1088,76 @@ export default function Candidates() {
                 </div>
               </div>
 
+              {/* FEEDBACK */}
               <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Your Feedback / Comments</label>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">
+                  Your Feedback / Comments
+                </label>
                 <textarea
                   className="w-full border border-gray-200 p-4 rounded-xl h-32 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all font-medium resize-none bg-gray-50/50"
                   placeholder="Enter your detailed feedback here..."
                   value={clientFeedback}
-                  onChange={(e) => setClientFeedback(e.target.value)}
+                  onChange={(e) => {
+                    console.log("Typing:", e.target.value);
+                    setClientFeedback(e.target.value);
+                  }}
                 />
               </div>
 
+              {/* ACTION BUTTONS */}
               <div className="flex justify-end gap-3 mt-8">
+
                 <button
                   onClick={() => setClientFeedbackModal(null)}
                   className="px-6 py-2.5 bg-gray-100 text-gray-600 font-semibold rounded-xl hover:bg-gray-200 transition-all"
                 >
                   Cancel
                 </button>
+
                 <button
                   onClick={async () => {
+                    console.log("CLICKED:", clientFeedbackModal, clientStatus, clientFeedback);
+
                     try {
+                      if (!clientFeedbackModal?.id) {
+                        alert("Candidate ID missing ❌");
+                        return;
+                      }
+
                       const { error } = await supabase
                         .from("candidates")
                         .update({
                           client_status: clientStatus,
                           client_feedback: clientFeedback
                         })
-                        .eq("id", clientFeedbackModal.id);
+                        .eq("id", Number(clientFeedbackModal.id));
+
+                      console.log("UPDATE RESULT:", error);
 
                       if (!error) {
+                        alert("Feedback saved successfully ✅");
+
                         setClientFeedbackModal(null);
+
+                        // refresh data
                         fetchCandidates(currentPage);
+
                       } else {
-                        alert("Failed to submit feedback");
+                        console.error(error);
+                        alert("Failed to submit feedback ❌");
                       }
+
                     } catch (err) {
-                      console.error(err);
+                      console.error("ERROR:", err);
                     }
                   }}
                   className="px-8 py-2.5 bg-teal-600 text-white font-bold rounded-xl hover:bg-teal-700 shadow-lg shadow-teal-200 transition-all"
                 >
                   Submit Feedback
                 </button>
+
               </div>
+
             </div>
           </div>
         </div>
